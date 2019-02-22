@@ -24,6 +24,8 @@ void freeNBT(struct nbt_tag* nbt) {
 		free(nbt->data.nbt_string);
 	} else if (nbt->id == NBT_TAG_INTARRAY) {
 		free(nbt->data.nbt_intarray.ints);
+	} else if (nbt->id == NBT_TAG_LONGARRAY) {
+		free(nbt->data.nbt_longarray.longs);
 	}
 }
 
@@ -40,8 +42,11 @@ struct nbt_tag* cloneNBT(struct nbt_tag* nbt) {
 	} else if (nbt->id == NBT_TAG_STRING) {
 		nt->data.nbt_string = strdup(nbt->data.nbt_string);
 	} else if (nbt->id == NBT_TAG_INTARRAY) {
-		nt->data.nbt_intarray.ints = malloc(nt->data.nbt_intarray.count * 4);
-		memcpy(nt->data.nbt_intarray.ints, nbt->data.nbt_intarray.ints, nt->data.nbt_intarray.count * 4);
+		nt->data.nbt_intarray.ints = malloc(nt->data.nbt_intarray.count * 8);
+		memcpy(nt->data.nbt_intarray.ints, nbt->data.nbt_intarray.ints, nt->data.nbt_intarray.count * 8);
+	} else if (nbt->id == NBT_TAG_LONGARRAY) {
+		nt->data.nbt_longarray.longs = malloc(nt->data.nbt_longarray.count * 8);
+		memcpy(nt->data.nbt_longarray.longs, nbt->data.nbt_longarray.longs, nt->data.nbt_longarray.count * 8);
 	}
 	for (size_t i = 0; i < nt->children_count; i++) {
 		nt->children[i] = cloneNBT(nbt->children[i]);
@@ -266,16 +271,47 @@ int __recurReadNBT(struct nbt_tag** root, unsigned char* buffer, size_t buflen, 
 		buffer += 4;
 		buflen -= 4;
 		r += 4;
-		if (buflen < (cur->data.nbt_intarray.count * 4) || cur->data.nbt_intarray.count <= 0) {
+		if (buflen < (cur->data.nbt_intarray.count * 4) || cur->data.nbt_intarray.count < 0) {
 			free(cur->name);
 			free(cur);
 			return 0;
 		}
-		cur->data.nbt_intarray.ints = malloc(cur->data.nbt_intarray.count * 4);
-		memcpy(cur->data.nbt_intarray.ints, buffer, cur->data.nbt_intarray.count * 4);
-		buffer += cur->data.nbt_intarray.count * 4;
-		buflen -= cur->data.nbt_intarray.count * 4;
-		r += cur->data.nbt_intarray.count * 4;
+		if (cur->data.nbt_intarray.count > 0) {
+			cur->data.nbt_intarray.ints = malloc(cur->data.nbt_intarray.count * 4);
+			memcpy(cur->data.nbt_intarray.ints, buffer, cur->data.nbt_intarray.count * 4);
+			for (int i=0; i<cur->data.nbt_intarray.count; i++) {
+				swapEndian(&cur->data.nbt_intarray.ints[i], 4);
+			}
+			buffer += cur->data.nbt_intarray.count * 4;
+			buflen -= cur->data.nbt_intarray.count * 4;
+			r += cur->data.nbt_intarray.count * 4;
+		}
+	} else if (cur->id == NBT_TAG_LONGARRAY) {
+		if (buflen < 4) {
+			free(cur->name);
+			free(cur);
+			return 0;
+		}
+		memcpy(&cur->data.nbt_longarray.count, buffer, 4);
+		swapEndian(&cur->data.nbt_longarray.count, 4);
+		buffer += 4;
+		buflen -= 4;
+		r += 4;
+		if (buflen < (cur->data.nbt_longarray.count * 4) || cur->data.nbt_longarray.count < 0) {
+			free(cur->name);
+			free(cur);
+			return 0;
+		}
+		if (cur->data.nbt_longarray.count > 0) {
+			cur->data.nbt_longarray.longs = malloc(cur->data.nbt_longarray.count * 8);
+			memcpy(cur->data.nbt_longarray.longs, buffer, cur->data.nbt_longarray.count * 8);
+			for (int i=0; i<cur->data.nbt_longarray.count; i++) {
+				swapEndian(&cur->data.nbt_longarray.longs[i], 8);
+			}
+			buffer += cur->data.nbt_longarray.count * 8;
+			buflen -= cur->data.nbt_longarray.count * 8;
+			r += cur->data.nbt_longarray.count * 8;
+		}
 	}
 	*root = cur;
 	return r;

@@ -14,7 +14,13 @@
 #include <errno.h>
 #include <zlib.h>
 
+int dumpNBTFile(char *file);
+int dumpAnvilFile(char *file);
+int dumpAnvilFilePart(int fd, int pos, int size);
+unsigned char *decompress(unsigned char *in, int *size);
+
 void recurPrint(struct nbt_tag* nbt, int ri) {
+	char unknownbuf[32];
 	if (nbt == NULL) return;
 	char* tn = NULL;
 	char* valbuf = NULL;
@@ -62,8 +68,9 @@ void recurPrint(struct nbt_tag* nbt, int ri) {
 	} else if (nbt->id == NBT_TAG_LIST) tn = "LIST";
 	else if (nbt->id == NBT_TAG_COMPOUND) tn = "COMPOUND";
 	else if (nbt->id == NBT_TAG_INTARRAY) {
-		tn = "INTARRAY";
-		valbuf = malloc(11 * nbt->data.nbt_intarray.count + 16);
+		tn = unknownbuf;
+		snprintf(unknownbuf, sizeof unknownbuf, "INTARRAY[%d]", nbt->data.nbt_intarray.count);
+		valbuf = malloc(16 * nbt->data.nbt_intarray.count + 16);
 		valbuf[0] = '{';
 		valbuf[1] = 0;
 		for (int32_t i = 0; i < nbt->data.nbt_intarray.count; i++) {
@@ -72,7 +79,23 @@ void recurPrint(struct nbt_tag* nbt, int ri) {
 			strcat(valbuf, nta);
 		}
 		strcat(valbuf, "}");
-	} else tn = "UNKNOWN";
+	}
+	else if (nbt->id == NBT_TAG_LONGARRAY) {
+		tn = unknownbuf;
+		snprintf(unknownbuf, sizeof unknownbuf, "LONGARRAY[%d]", nbt->data.nbt_longarray.count);
+		valbuf = malloc(25 * nbt->data.nbt_longarray.count + 16);
+		valbuf[0] = '{';
+		valbuf[1] = 0;
+		for (int32_t i = 0; i < nbt->data.nbt_longarray.count; i++) {
+			char nta[25];
+			snprintf(nta, 25, i == 0 ? "%016lx" : ", %016lx", nbt->data.nbt_longarray.longs[i]);
+			strcat(valbuf, nta);
+		}
+		strcat(valbuf, "}");
+	} else {
+		tn=unknownbuf;
+		snprintf(unknownbuf, sizeof unknownbuf, "UNKNOWN %d", nbt->id);
+	}
 	char indents[ri * 4 + 1];
 	for (int i = 0; i < ri * 4; i++) {
 		indents[i] = ' ';
@@ -91,11 +114,111 @@ void recurPrint(struct nbt_tag* nbt, int ri) {
 
 int main(int argc, char* argv[]) {
 	if (argc <= 1) {
-		printf("Usage: nbtview <file>\n");
+		printf("Usage: nbtview <file> ...\n");
+		exit(0);
 	}
-	int fd = open(argv[argc - 1], O_RDONLY);
+	int errs=0;
+	for (int i=1; i<argc; i++) {
+		char *ext = strrchr(argv[i], '.');
+		if (ext != NULL
+		    && (strcmp(ext, ".mca") == 0 || strcmp(ext, ".mcr") == 0)) {
+		    	errs+=dumpAnvilFile(argv[i]);
+		} else {
+			errs+=dumpNBTFile(argv[i]);
+		}
+	}
+	return errs;
+}
+
+int dumpAnvilFile(char *file) {
+	uint32_t locations[1024];
+	int fd = open(file, O_RDONLY);
 	if (fd < 0) {
-		printf("Error opening file: %s\n", strerror(errno));
+		printf("Error opening %s: %s\n", file, strerror(errno));
+		return 1;
+	}
+	if (read(fd, locations, sizeof locations) != sizeof locations) {
+		printf("File header too short on %s\n", file);
+	}
+	for (int i = 0; i < 1024; i++) {
+		if (locations[i] == 0) {
+			printf("chunk %d/%d not generated\n", i%32, i/32);
+		} else {
+			int offset=
+				(locations[i] & 0x0ff ) << 16
+				| (locations[i] & 0xff00)
+				| (locations[i] & 0xff0000) >> 16;
+			int sectors=(locations[i] & 0xff000000) >> 24;
+			printf("chunk %d/%d\n", i%32, i/32);
+			dumpAnvilFilePart(fd, offset*4096, sectors*4096);
+		}
+	}
+	return 0;
+}
+
+int dumpAnvilFilePart(int fd, int pos, int size) {
+	unsigned char *compressed=malloc(size);
+	lseek(fd, pos, SEEK_SET);
+	if (read(fd, compressed, size)!=size) {
+		printf("can't read %d bytes\n", size);
+		return 1;
+	}
+	// printf("length=%08x type=%d\n", *(int32_t *)compressed, compressed[4]);
+	unsigned char *uncomp = decompress(compressed+5, &size);
+	free(compressed);
+	if (uncomp==NULL) {
+		return 1;
+	}
+	struct nbt_tag* nbt = NULL;
+	if (!readNBT(&nbt, uncomp, size)) {
+		printf("Failed reading NBT: %s\n", strerror(errno));
+		return 1;
+	}
+	recurPrint(nbt, 0);
+	return 0;
+}
+
+unsigned char *decompress(unsigned char *in, int *size) {
+	z_stream stream;
+	stream.zalloc = Z_NULL;
+	stream.zfree = Z_NULL;
+	stream.opaque = Z_NULL;
+	if (inflateInit2(&stream, (32 + MAX_WBITS)) != Z_OK) {
+		printf("inflateInit Error\n");
+		return NULL;
+	}
+
+	size_t outsize=*size*3;
+	unsigned char *out=malloc(outsize);
+	stream.avail_in=*size;
+	stream.next_in=in;
+	stream.avail_out=outsize;
+	stream.next_out=out;
+
+	do {
+		if (outsize - stream.total_out < 8192) {
+			outsize += 16384;
+			out = realloc(out, outsize);
+		}
+		stream.avail_out = outsize - stream.total_out;
+		stream.next_out = out + stream.total_out;
+		if (inflate(&stream, Z_FINISH) == Z_STREAM_ERROR) {
+			printf("Compression Read Error!\n");
+			inflateEnd(&stream);
+			free(out);
+			return NULL;
+		}
+	} while (stream.avail_out == 0);
+	inflateEnd(&stream);
+	*size=outsize;
+	return out;
+}
+
+
+int dumpNBTFile(char *file) {
+	int fd = open(file, O_RDONLY);
+	if (fd < 0) {
+		printf("Error opening %s: %s\n", file, strerror(errno));
 		return 1;
 	}
 	unsigned char* tbuf = malloc(4096);
