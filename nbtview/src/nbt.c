@@ -266,16 +266,18 @@ int __recurReadNBT(struct nbt_tag** root, unsigned char* buffer, size_t buflen, 
 		buffer += 4;
 		buflen -= 4;
 		r += 4;
-		if (buflen < (cur->data.nbt_intarray.count * 4) || cur->data.nbt_intarray.count <= 0) {
+		if (buflen < (cur->data.nbt_intarray.count * 4) || cur->data.nbt_intarray.count < 0) {
 			free(cur->name);
 			free(cur);
 			return 0;
 		}
-		cur->data.nbt_intarray.ints = malloc(cur->data.nbt_intarray.count * 4);
-		memcpy(cur->data.nbt_intarray.ints, buffer, cur->data.nbt_intarray.count * 4);
-		buffer += cur->data.nbt_intarray.count * 4;
-		buflen -= cur->data.nbt_intarray.count * 4;
-		r += cur->data.nbt_intarray.count * 4;
+		if (cur->data.nbt_intarray.count > 0) {
+			cur->data.nbt_intarray.ints = malloc(cur->data.nbt_intarray.count * 4);
+			memcpy(cur->data.nbt_intarray.ints, buffer, cur->data.nbt_intarray.count * 4);
+			buffer += cur->data.nbt_intarray.count * 4;
+			buflen -= cur->data.nbt_intarray.count * 4;
+			r += cur->data.nbt_intarray.count * 4;
+		}
 	}
 	*root = cur;
 	return r;
