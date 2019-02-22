@@ -23,6 +23,7 @@
 #define NBT_TAG_LIST 9
 #define NBT_TAG_COMPOUND 10
 #define NBT_TAG_INTARRAY 11
+#define NBT_TAG_LONGARRAY 12
 
 union nbt_data {
 		signed char nbt_byte;
@@ -44,6 +45,10 @@ union nbt_data {
 				int32_t count;
 				int32_t* ints;
 		} nbt_intarray;
+		struct {
+				int32_t count;
+				int64_t* longs;
+		} nbt_longarray;
 };
 
 struct nbt_tag {
