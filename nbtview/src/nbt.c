@@ -297,7 +297,7 @@ int __recurReadNBT(struct nbt_tag** root, unsigned char* buffer, size_t buflen, 
 		buffer += 4;
 		buflen -= 4;
 		r += 4;
-		if (buflen < (cur->data.nbt_longarray.count * 4) || cur->data.nbt_longarray.count < 0) {
+		if (buflen < (cur->data.nbt_longarray.count * 8) || cur->data.nbt_longarray.count < 0) {
 			free(cur->name);
 			free(cur);
 			return 0;
